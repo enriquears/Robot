@@ -3,7 +3,7 @@
 //|        Gestión trailing con mejora mínima y SL inicial           |
 //+------------------------------------------------------------------+
 #property copyright "TuNombre"
-#property version   "1.35"
+#property version   "1.36"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -48,6 +48,8 @@ input double CancelImpulseDistancePoints = 30; // Máx. distancia aumentada para
 input string ___PREVENCION___    = "──── PREVENCIÓN DE ERRORES ────";
 input int    CooldownSeconds     = 1;         // Segundos entre operaciones (reducido)
 input bool   EnableVolatilityFilter = false;   // Habilitar filtro de volatilidad
+input uint   MagicNumber            = 12345;   // Número mágico para las órdenes
+input double VolatilityFactor       = 10;      // Factor para el filtro de volatilidad
 
 //+------------------------------------------------------------------+
 //|                  Variables Globales                              |
@@ -140,13 +142,15 @@ int OnInit()
    ArrayResize(last_ticks, ImpulseTicks);
    ArrayInitialize(last_ticks, 0.0);
    Print("=== EA INICIALIZADO ===");
-   Print("Parámetros:");
-   Print("  EntryOffsetPoints: ", EntryOffsetPoints);
-   Print("  CancelImpulseDistancePoints: ", CancelImpulseDistancePoints);
-   Print("  CooldownSeconds: ", CooldownSeconds);
-   Print("  ImpulseSlopeThreshold: ", ImpulseSlopeThreshold);
-   return(INIT_SUCCEEDED);
-}
+    Print("Parámetros:");
+    Print("  EntryOffsetPoints: ", EntryOffsetPoints);
+    Print("  CancelImpulseDistancePoints: ", CancelImpulseDistancePoints);
+    Print("  CooldownSeconds: ", CooldownSeconds);
+    Print("  ImpulseSlopeThreshold: ", ImpulseSlopeThreshold);
+    Print("  MagicNumber: ", MagicNumber);
+    Print("  VolatilityFactor: ", VolatilityFactor);
+    return(INIT_SUCCEEDED);
+ }
 
 //+------------------------------------------------------------------+
 //| Verifica si el trading está permitido                            |
@@ -280,7 +284,7 @@ void OnTick()
          return;
       }
 
-      trade.SetExpertMagicNumber(12345);
+      trade.SetExpertMagicNumber(MagicNumber);
       trade.SetDeviationInPoints(50);
 
       if(trade.BuyStop(lot, buy_price, _Symbol, sl, 0.0))
@@ -315,7 +319,7 @@ void OnTick()
          return;
       }
 
-      trade.SetExpertMagicNumber(12345);
+      trade.SetExpertMagicNumber(MagicNumber);
       trade.SetDeviationInPoints(50);
 
       if(trade.SellStop(lot, sell_price, _Symbol, sl, 0.0))
@@ -737,9 +741,9 @@ bool IsImpulseUp()
    if(EnableVolatilityFilter && result)
    {
       double spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
-      if(MathAbs(slope) < spread * 10) // Factor fijo 10
+      if(MathAbs(slope) < spread * VolatilityFactor)
       {
-         Print(" - Filtro Volatilidad UP: Pendiente ", slope, " < Spread*10 ", spread*10);
+         Print(" - Filtro Volatilidad UP: Pendiente ", slope, " < Spread*", VolatilityFactor, " ", spread * VolatilityFactor);
          return false;
       }
    }
@@ -782,9 +786,9 @@ bool IsImpulseDown()
    if(EnableVolatilityFilter && result)
    {
       double spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
-      if(MathAbs(slope) < spread * 10)
+      if(MathAbs(slope) < spread * VolatilityFactor)
       {
-         Print(" - Filtro Volatilidad DOWN: Pendiente ", MathAbs(slope), " < Spread*10 ", spread*10);
+         Print(" - Filtro Volatilidad DOWN: Pendiente ", MathAbs(slope), " < Spread*", VolatilityFactor, " ", spread * VolatilityFactor);
          return false;
       }
    }
