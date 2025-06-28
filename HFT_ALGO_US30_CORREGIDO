@@ -3,7 +3,7 @@
 //|        Gestión trailing con mejora mínima y SL inicial           |
 //+------------------------------------------------------------------+
 #property copyright "TuNombre"
-#property version   "1.36"
+#property version   "1.37"
 #property strict
 
 #include <Trade\Trade.mqh>
