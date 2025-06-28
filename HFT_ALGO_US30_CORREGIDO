@@ -1,0 +1,795 @@
+//+------------------------------------------------------------------+
+//|                  HFT_ALGO_US30_CORREGIDO.mq5                     |
+//|        Gestión trailing con mejora mínima y SL inicial           |
+//+------------------------------------------------------------------+
+#property copyright "TuNombre"
+#property version   "1.35"
+#property strict
+
+#include <Trade\Trade.mqh>
+#include <Trade\OrderInfo.mqh>
+#include <Trade\PositionInfo.mqh>
+
+CTrade trade;
+COrderInfo order_info;
+CPositionInfo position_info;
+
+//+------------------------------------------------------------------+
+//|                  Parámetros de Entrada                           |
+//+------------------------------------------------------------------+
+
+//--- Gestión de riesgo y lotaje
+input string ___LOTE___          = "──── GESTIÓN DE RIESGO Y LOTE ────";
+input double RiskPercent         = 0.3;        // % del balance a arriesgar por operación
+input double MaxSL_Points        = 160;      // Stop Loss máximo en puntos
+
+//--- Horario de operación
+input string ___HORARIO___       = "──── HORARIO DE OPERACIÓN ────";
+input ENUM_TIMEFRAMES Timeframe  = PERIOD_M1;  // Timeframe para operar (solo referencia)
+input string StartTime           = "03:30";    // Hora de inicio (hh:mm)
+input string EndTime             = "23:00";    // Hora de fin (hh:mm)
+
+//--- Entradas y detección de impulso
+input string ___ENTRADAS___      = "──── ENTRADAS E IMPULSO ────";
+input double EntryOffsetPoints   = 6;         // Offset de entrada aumentado (puntos)
+input int    ImpulseTicks        = 11;         // N° de ticks para calcular la pendiente
+input double ImpulseSlopeThreshold = 0.8;      // Umbral mínimo de pendiente (impulso)
+
+//--- Gestión de trailing stop
+input string ___TRAILING___      = "──── TRAILING STOP ────";
+input double TrailingDistancePoints = 290;      // Distancia del trailing stop (puntos)
+input double MinImprovementPoints = 14;       // Mínima mejora para ajustar trailing (puntos)
+
+//--- Gestión y cancelación de órdenes pendientes
+input string ___PENDIENTES___    = "──── CANCELACIÓN DE ÓRDENES ────";
+input double CancelImpulseDistancePoints = 30; // Máx. distancia aumentada para cancelar (puntos)
+
+//--- Prevención de errores
+input string ___PREVENCION___    = "──── PREVENCIÓN DE ERRORES ────";
+input int    CooldownSeconds     = 1;         // Segundos entre operaciones (reducido)
+input bool   EnableVolatilityFilter = false;   // Habilitar filtro de volatilidad
+
+//+------------------------------------------------------------------+
+//|                  Variables Globales                              |
+//+------------------------------------------------------------------+
+ulong buy_ticket = 0;
+ulong sell_ticket = 0;
+bool buy_order_placed = false;
+bool sell_order_placed = false;
+double last_ticks[];
+datetime last_order_time = 0;
+double entry_price = 0.0;
+
+//+------------------------------------------------------------------+
+//| Función para describir errores                                   |
+//+------------------------------------------------------------------+
+string ErrorCodeDescription(int error_code)
+{
+   switch(error_code)
+   {
+      case 0:   return "OK";
+      case 1:   return "ERR_NO_RESULT";
+      case 2:   return "ERR_COMMON_ERROR";
+      case 3:   return "ERR_INVALID_TRADE_PARAMETERS";
+      case 4:   return "ERR_SERVER_BUSY";
+      case 5:   return "ERR_OLD_VERSION";
+      case 6:   return "ERR_NO_CONNECTION";
+      case 7:   return "ERR_NOT_ENOUGH_RIGHTS";
+      case 8:   return "ERR_TOO_FREQUENT_REQUESTS";
+      case 9:   return "ERR_MALFUNCTIONAL_TRADE";
+      case 64:  return "ERR_ACCOUNT_DISABLED";
+      case 65:  return "ERR_INVALID_ACCOUNT";
+      case 128: return "ERR_INVALID_PRICE";
+      case 129: return "ERR_INVALID_STOPS";
+      case 130: return "ERR_INVALID_TRADE_VOLUME";
+      case 131: return "ERR_MARKET_CLOSED";
+      case 132: return "ERR_TRADE_DISABLED";
+      case 133: return "ERR_NOT_ENOUGH_MONEY";
+      case 134: return "ERR_PRICE_CHANGED";
+      case 135: return "ERR_OFF_QUOTES";
+      case 136: return "ERR_BROKER_BUSY";
+      case 137: return "ERR_REQUOTE";
+      case 138: return "ERR_ORDER_LOCKED";
+      case 139: return "ERR_LONG_POSITIONS_ONLY_ALLOWED";
+      case 140: return "ERR_TOO_MANY_REQUESTS";
+      case 141: return "ERR_TRADE_MODIFY_DENIED";
+      case 145: return "ERR_TRADE_TOO_MANY_ORDERS";
+      case 146: return "ERR_TRADE_HEDGE_PROHIBITED";
+      case 147: return "ERR_TRADE_PROHIBITED_BY_FIFO";
+      case 10004: return "TRADE_RETCODE_REQUOTE";
+      case 10006: return "TRADE_RETCODE_REJECT";
+      case 10007: return "TRADE_RETCODE_CANCEL";
+      case 10008: return "TRADE_RETCODE_PLACED";
+      case 10009: return "TRADE_RETCODE_DONE";
+      case 10010: return "TRADE_RETCODE_DONE_PARTIAL";
+      case 10011: return "TRADE_RETCODE_ERROR";
+      case 10012: return "TRADE_RETCODE_TIMEOUT";
+      case 10013: return "TRADE_RETCODE_INVALID";
+      case 10014: return "TRADE_RETCODE_INVALID_VOLUME";
+      case 10015: return "TRADE_RETCODE_INVALID_PRICE";
+      case 10016: return "TRADE_RETCODE_INVALID_STOPS";
+      case 10017: return "TRADE_RETCODE_TRADE_DISABLED";
+      case 10018: return "TRADE_RETCODE_MARKET_CLOSED";
+      case 10019: return "TRADE_RETCODE_NO_MONEY";
+      case 10020: return "TRADE_RETCODE_PRICE_CHANGED";
+      case 10021: return "TRADE_RETCODE_PRICE_OFF";
+      case 10022: return "TRADE_RETCODE_INVALID_EXPIRATION";
+      case 10023: return "TRADE_RETCODE_ORDER_CHANGED";
+      case 10024: return "TRADE_RETCODE_TOO_MANY_REQUESTS";
+      case 10025: return "TRADE_RETCODE_NO_CHANGES";
+      case 10026: return "TRADE_RETCODE_SERVER_DISABLES_AT";
+      case 10027: return "TRADE_RETCODE_CLIENT_DISABLES_AT";
+      case 10028: return "TRADE_RETCODE_LOCKED";
+      case 10029: return "TRADE_RETCODE_FROZEN";
+      case 10030: return "TRADE_RETCODE_INVALID_FILL";
+      case 10031: return "TRADE_RETCODE_CONNECTION";
+      case 10032: return "TRADE_RETCODE_ONLY_REAL";
+      case 10033: return "TRADE_RETCODE_LIMIT_ORDERS";
+      case 10034: return "TRADE_RETCODE_LIMIT_VOLUME";
+      case 10035: return "TRADE_RETCODE_INVALID_ORDER";
+      case 10036: return "TRADE_RETCODE_POSITION_CLOSED";
+      default:   return "Error desconocido (" + IntegerToString(error_code) + ")";
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   ArrayResize(last_ticks, ImpulseTicks);
+   ArrayInitialize(last_ticks, 0.0);
+   Print("=== EA INICIALIZADO ===");
+   Print("Parámetros:");
+   Print("  EntryOffsetPoints: ", EntryOffsetPoints);
+   Print("  CancelImpulseDistancePoints: ", CancelImpulseDistancePoints);
+   Print("  CooldownSeconds: ", CooldownSeconds);
+   Print("  ImpulseSlopeThreshold: ", ImpulseSlopeThreshold);
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Verifica si el trading está permitido                            |
+//+------------------------------------------------------------------+
+bool CanTrade()
+{
+   return (bool)TerminalInfoInteger(TERMINAL_TRADE_ALLOWED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   Print("=== Tick iniciado a ", TimeToString(TimeCurrent(), TIME_SECONDS), " ===");
+
+   // 1. Filtro símbolo y timeframe
+   if(StringFind(_Symbol, "US30") < 0 || _Period != PERIOD_M1)
+   {
+      Print(" - SKIP: Símbolo/Timeframe incorrecto. Símbolo: ", _Symbol, ", Timeframe: ", EnumToString(_Period));
+      return;
+   }
+
+   // 2. Verificar permisos y horario
+   if(!CanTrade())
+   {
+      Print(" - SKIP: Trading no permitido por terminal");
+      return;
+   }
+
+   bool sessionOk = TimeIsWithinSession();
+   Print(" - Horario de trading: ", sessionOk ? "DENTRO" : "FUERA", " (", StartTime, " a ", EndTime, ")");
+   if(!sessionOk) return;
+
+   // 3. Obtener precio bid
+   double bid;
+   if(!SymbolInfoDouble(_Symbol, SYMBOL_BID, bid))
+   {
+      Print(" - ERROR: No se pudo obtener Bid");
+      return;
+   }
+   Print(" - Precio Bid actual: ", DoubleToString(bid, _Digits));
+
+   // 4. Actualizar array de ticks (CORREGIDO)
+   if(ArraySize(last_ticks) != ImpulseTicks)
+      ArrayResize(last_ticks, ImpulseTicks);
+   for(int i = ImpulseTicks - 1; i > 0; i--)
+      last_ticks[i] = last_ticks[i - 1];
+   last_ticks[0] = bid;
+
+   string ticks_str = "";
+   for(int i = 0; i < MathMin(5, ArraySize(last_ticks)); i++)
+      ticks_str += DoubleToString(last_ticks[i], _Digits) + (i < 4 ? ", " : "");
+   Print(" - Últimos ticks: ", ticks_str);
+
+   // 5. Verificar posición existente
+   bool has_position = position_info.Select(_Symbol);
+   if(has_position)
+   {
+      Print(" - POSICIÓN ACTIVA: Ticket #", position_info.Ticket(), 
+            ", Tipo: ", EnumToString(position_info.PositionType()),
+            ", Volumen: ", position_info.Volume(),
+            ", Beneficio: ", position_info.Profit());
+      ManageTrailingAfterRetroceso();
+      return;
+   }
+   else Print(" - Sin posición activa");
+
+   // 6. Cancelar órdenes inválidas
+   Print(" - Órdenes pendientes antes de cancelar: ", OrdersTotal());
+   CancelInvalidPendingOrders();
+   Print(" - Órdenes pendientes después de cancelar: ", OrdersTotal());
+
+   // 7. Calcular lote (con protección)
+   double lot = CalculateLotSize();
+   Print(" - Lote calculado: ", DoubleToString(lot, 2));
+   if(lot <= 0 || lot > 100)
+   {
+      Print(" !!! ERROR: Lote inválido: ", lot);
+      return;
+   }
+
+   // 8. Obtener precio ask
+   double ask;
+   if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask))
+   {
+      Print(" - ERROR: No se pudo obtener Ask");
+      return;
+   }
+   Print(" - Precio Ask actual: ", DoubleToString(ask, _Digits));
+
+   // 9. Verificar impulso y colocar órdenes
+   bool impulseUp = IsImpulseUp();
+   bool impulseDown = IsImpulseDown();
+   Print(" - Impulso: ", 
+        impulseUp ? "ALCISTA" : (impulseDown ? "BAJISTA" : "SIN IMPULSO"),
+        " (Up: ", impulseUp, ", Down: ", impulseDown, ")");
+
+   // 9.1 Evitar señales contradictorias
+   if(impulseUp && impulseDown)
+   {
+      Print(" - Conflicto: Señales alcista y bajista simultáneas. No se toman acciones");
+      return;
+   }
+
+   // 9.2 Cooldown
+   if(TimeCurrent() - last_order_time < CooldownSeconds)
+   {
+      PrintFormat(" - En periodo de cooldown (%d segundos). No se colocan nuevas órdenes", CooldownSeconds);
+      return;
+   }
+
+   bool buyOrderExists = OrderExist(ORDER_TYPE_BUY_STOP);
+   bool sellOrderExists = OrderExist(ORDER_TYPE_SELL_STOP);
+   Print(" - Órdenes existentes: BuyStop=", buyOrderExists, ", SellStop=", sellOrderExists);
+
+   // 10. Intentar colocar BuyStop (con puntos)
+   if(!buyOrderExists && !has_position && impulseUp)
+   {
+      double buy_price = NormalizeDouble(ask + EntryOffsetPoints * _Point, _Digits);
+      double sl = NormalizeDouble(buy_price - MaxSL_Points * _Point, _Digits);
+
+      Print(" - Intentando BUY STOP: Precio=", DoubleToString(buy_price, _Digits),
+            ", SL=", DoubleToString(sl, _Digits), ", Lote=", DoubleToString(lot, 2));
+      Print(" - CONDICIONES BUY STOP CUMPLIDAS");
+
+      // Verificar margen ANTES de enviar
+      if(!CheckMargin(lot, ORDER_TYPE_BUY_STOP))
+      {
+         Print(" !!! No se coloca BUY STOP: Margen insuficiente");
+         return;
+      }
+
+      trade.SetExpertMagicNumber(12345);
+      trade.SetDeviationInPoints(50);
+
+      if(trade.BuyStop(lot, buy_price, _Symbol, sl, 0.0))
+      {
+         buy_ticket = trade.ResultOrder();
+         Print(" +++ ORDEN BUY STOP COLOCADA #", buy_ticket);
+         buy_order_placed = true;
+         entry_price = buy_price;
+         last_order_time = TimeCurrent();
+      }
+      else
+      {
+         int error_code = GetLastError();
+         Print(" !!! ERROR al colocar BUY STOP: ", ErrorCodeDescription(error_code));
+      }
+   }
+
+   // 11. Intentar colocar SellStop (con puntos)
+   else if(!sellOrderExists && !has_position && impulseDown)
+   {
+      double sell_price = NormalizeDouble(bid - EntryOffsetPoints * _Point, _Digits);
+      double sl = NormalizeDouble(sell_price + MaxSL_Points * _Point, _Digits);
+
+      Print(" - Intentando SELL STOP: Precio=", DoubleToString(sell_price, _Digits),
+            ", SL=", DoubleToString(sl, _Digits), ", Lote=", DoubleToString(lot, 2));
+      Print(" - CONDICIONES SELL STOP CUMPLIDAS");
+
+      // Verificar margen ANTES de enviar
+      if(!CheckMargin(lot, ORDER_TYPE_SELL_STOP))
+      {
+         Print(" !!! No se coloca SELL STOP: Margen insuficiente");
+         return;
+      }
+
+      trade.SetExpertMagicNumber(12345);
+      trade.SetDeviationInPoints(50);
+
+      if(trade.SellStop(lot, sell_price, _Symbol, sl, 0.0))
+      {
+         sell_ticket = trade.ResultOrder();
+         Print(" +++ ORDEN SELL STOP COLOCADA #", sell_ticket);
+         sell_order_placed = true;
+         entry_price = sell_price;
+         last_order_time = TimeCurrent();
+      }
+      else
+      {
+         int error_code = GetLastError();
+         Print(" !!! ERROR al colocar SELL STOP: ", ErrorCodeDescription(error_code));
+      }
+   }
+   else
+   {
+      Print(" - No se cumplen condiciones para nueva orden: ",
+            "BuyOrderExists=", buyOrderExists,
+            ", SellOrderExists=", sellOrderExists,
+            ", PositionSelect=", has_position,
+            ", ImpulseUp=", impulseUp,
+            ", ImpulseDown=", impulseDown);
+   }
+
+   // 12. Reiniciar flags si es necesario
+   ResetOrderFlagsIfNoOrders();
+   Print(" - Flags: buy_order_placed=", buy_order_placed, ", sell_order_placed=", sell_order_placed);
+   Print("=== Tick finalizado ===");
+}
+
+//+------------------------------------------------------------------+
+//| Verifica si existe una orden del tipo especificado               |
+//+------------------------------------------------------------------+
+bool OrderExist(int type)
+{
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0 && order_info.Select(ticket))
+      {
+         if(order_info.Symbol() == _Symbol && order_info.OrderType() == type)
+         {
+            count++;
+         }
+      }
+   }
+   Print(" - Ordenes tipo ", EnumToString((ENUM_ORDER_TYPE)type), ": ", count);
+   return count > 0;
+}
+
+//+------------------------------------------------------------------+
+//| Cancela órdenes pendientes inválidas (usando puntos reales)      |
+//+------------------------------------------------------------------+
+void CancelInvalidPendingOrders()
+{
+   double ask, bid;
+   if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(_Symbol, SYMBOL_BID, bid)) 
+   {
+      Print(" - ERROR: No se pudo obtener precios para cancelación");
+      return;
+   }
+
+   for(int i = OrdersTotal()-1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0 && order_info.Select(ticket) && order_info.Symbol() == _Symbol)
+      {
+         double order_price = order_info.PriceOpen();
+         ENUM_ORDER_TYPE type = order_info.OrderType();
+
+         //--- Para órdenes BUY STOP
+         if(type == ORDER_TYPE_BUY_STOP)
+         {
+            bool should_cancel = false;
+
+            double distance_threshold = CancelImpulseDistancePoints * _Point;
+            if(bid < order_price - distance_threshold)
+            {
+               PrintFormat(" - Cancelar BUY STOP: Precio se alejó %.1f pts (Bid: %.1f < Orden: %.1f - %.1f)", 
+                          distance_threshold/_Point, bid, order_price, distance_threshold/_Point);
+               should_cancel = true;
+            }
+
+            if(!IsImpulseUp())
+            {
+               Print(" - Cancelar BUY STOP: Impulso alcista terminado");
+               should_cancel = true;
+            }
+
+            if(should_cancel)
+            {
+               if(trade.OrderDelete(ticket))
+               {
+                  Print(" - Orden BUY STOP cancelada #", ticket);
+                  buy_order_placed = false;
+               }
+               else
+               {
+                  Print(" !!! Error al cancelar BUY STOP: ", ErrorCodeDescription(GetLastError()));
+               }
+            }
+         }
+
+         //--- Para órdenes SELL STOP
+         else if(type == ORDER_TYPE_SELL_STOP)
+         {
+            bool should_cancel = false;
+
+            double distance_threshold = CancelImpulseDistancePoints * _Point;
+            if(ask > order_price + distance_threshold)
+            {
+               PrintFormat(" - Cancelar SELL STOP: Precio se alejó %.1f pts (Ask: %.1f > Orden: %.1f + %.1f)", 
+                          distance_threshold/_Point, ask, order_price, distance_threshold/_Point);
+               should_cancel = true;
+            }
+
+            if(!IsImpulseDown())
+            {
+               Print(" - Cancelar SELL STOP: Impulso bajista terminado");
+               should_cancel = true;
+            }
+
+            if(should_cancel)
+            {
+               if(trade.OrderDelete(ticket))
+               {
+                  Print(" - Orden SELL STOP cancelada #", ticket);
+                  sell_order_placed = false;
+               }
+               else
+               {
+                  Print(" !!! Error al cancelar SELL STOP: ", ErrorCodeDescription(GetLastError()));
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Trailing dinámico con mejora mínima (usando puntos reales)       |
+//+------------------------------------------------------------------+
+void ManageTrailingAfterRetroceso()
+{
+   static ulong last_position_id = 0;
+   static double retroceso_min = 0.0;
+   static bool esperando_avance = true;
+   static double trailing_sl = 0.0;
+   static bool primera_vez = true;
+
+   if(!position_info.Select(_Symbol)) 
+   {
+      last_position_id = 0;
+      retroceso_min = 0.0;
+      esperando_avance = true;
+      trailing_sl = 0.0;
+      primera_vez = true;
+      return;
+   }
+
+   ulong this_position_id = position_info.Ticket();
+   if(this_position_id != last_position_id) 
+   {
+      last_position_id = this_position_id;
+      retroceso_min = 0.0;
+      esperando_avance = true;
+      trailing_sl = 0.0;
+      primera_vez = true;
+   }
+
+   double open_price = position_info.PriceOpen();
+   double price = 0.0;
+   ENUM_POSITION_TYPE type = position_info.PositionType();
+
+   if(type == POSITION_TYPE_BUY)
+      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   else if(type == POSITION_TYPE_SELL)
+      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   else return;
+
+   double diferencia = (type == POSITION_TYPE_BUY) ? (price - open_price) : (open_price - price);
+
+   double stop_level = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   double min_improvement = MinImprovementPoints * _Point; // Ahora expresado en puntos reales
+
+   if(primera_vez) 
+   {
+      retroceso_min = diferencia;
+      primera_vez = false;
+      Print(" - Trailing: Primer registro. Retroceso_min: ", retroceso_min);
+   }
+
+   if(esperando_avance)
+   {
+      if(diferencia < retroceso_min)
+      {
+         retroceso_min = diferencia;
+         Print(" - Trailing: Nuevo retroceso mínimo: ", retroceso_min);
+      }
+
+      if(diferencia > retroceso_min + min_improvement)
+      {
+         esperando_avance = false;
+
+         double new_sl;
+         if(type == POSITION_TYPE_BUY)
+            new_sl = price - TrailingDistancePoints * _Point;
+         else
+            new_sl = price + TrailingDistancePoints * _Point;
+
+         if(type == POSITION_TYPE_BUY && (price - new_sl) < stop_level)
+            new_sl = price - stop_level;
+         if(type == POSITION_TYPE_SELL && (new_sl - price) < stop_level)
+            new_sl = price + stop_level;
+
+         trailing_sl = new_sl;
+
+         if(trade.PositionModify(_Symbol, trailing_sl, position_info.TakeProfit()))
+            Print(" - Trailing: SL inicial establecido en: ", trailing_sl);
+         else
+            Print(" !!! ERROR al modificar SL: ", ErrorCodeDescription(GetLastError()));
+      }
+   }
+   else
+   {
+      double new_sl;
+      if(type == POSITION_TYPE_BUY)
+      {
+         new_sl = price - TrailingDistancePoints * _Point;
+         if(new_sl > trailing_sl + min_improvement)
+         {
+            if((price - new_sl) < stop_level)
+               new_sl = price - stop_level;
+
+            trailing_sl = new_sl;
+
+            if(trade.PositionModify(_Symbol, trailing_sl, position_info.TakeProfit()))
+               Print(" - Trailing: SL actualizado (BUY) a: ", trailing_sl);
+            else
+               Print(" !!! ERROR al actualizar SL (BUY): ", ErrorCodeDescription(GetLastError()));
+         }
+      }
+      else if(type == POSITION_TYPE_SELL)
+      {
+         new_sl = price + TrailingDistancePoints * _Point;
+         if(new_sl < trailing_sl - min_improvement)
+         {
+            if((new_sl - price) < stop_level)
+               new_sl = price + stop_level;
+
+            trailing_sl = new_sl;
+
+            if(trade.PositionModify(_Symbol, trailing_sl, position_info.TakeProfit()))
+               Print(" - Trailing: SL actualizado (SELL) a: ", trailing_sl);
+            else
+               Print(" !!! ERROR al actualizar SL (SELL): ", ErrorCodeDescription(GetLastError()));
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Verifica si la hora actual está dentro del horario de trading    |
+//+------------------------------------------------------------------+
+bool TimeIsWithinSession()
+{
+   datetime now = TimeCurrent();
+   int h_now, m_now, h_start, m_start, h_end, m_end;
+   StringToTimeHM(TimeToString(now, TIME_MINUTES), h_now, m_now);
+   StringToTimeHM(StartTime, h_start, m_start);
+   StringToTimeHM(EndTime, h_end, m_end);
+
+   int mins_now = h_now * 60 + m_now;
+   int mins_start = h_start * 60 + m_start;
+   int mins_end = h_end * 60 + m_end;
+
+   // Soporta horarios que cruzan medianoche
+   if(mins_start <= mins_end)
+      return (mins_now >= mins_start && mins_now <= mins_end);
+   else
+      return (mins_now >= mins_start || mins_now <= mins_end);
+}
+
+// Auxiliar para convertir "HH:MM" a horas y minutos
+void StringToTimeHM(string timestr, int &hour, int &minute)
+{
+   // asume formato exacto "HH:MM"
+   hour = StringToInteger(StringSubstr(timestr, 0, 2));
+   minute = StringToInteger(StringSubstr(timestr, 3, 2));
+}
+
+//+------------------------------------------------------------------+
+//| Calcula el tamaño del lote basado en el riesgo (seguro)          |
+//+------------------------------------------------------------------+
+double CalculateLotSize()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double free_margin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+   double risk_usd = balance * RiskPercent / 100.0;
+
+   double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double point_value = tick_value * (_Point / tick_size);
+
+   double lot_size = risk_usd / (MaxSL_Points * point_value);
+
+   double margin_required_per_lot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   if(margin_required_per_lot <= 0) 
+      margin_required_per_lot = 500; // Valor por defecto si no se obtiene
+
+   double max_lot_by_margin = (free_margin * 0.5) / margin_required_per_lot;
+
+   double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   lot_size = MathMin(lot_size, max_lot_by_margin);
+   lot_size = MathMin(lot_size, max_lot);
+   lot_size = MathMax(lot_size, min_lot);
+
+   if(step_lot > 0)
+      lot_size = step_lot * MathFloor(lot_size / step_lot);
+
+   lot_size = NormalizeDouble(lot_size, 2);
+
+   PrintFormat("CalculateLotSize: balance=%.2f, free_margin=%.2f, margin_per_lot=%.2f, max_lot_by_margin=%.2f, lot_size=%.2f",
+               balance, free_margin, margin_required_per_lot, max_lot_by_margin, lot_size);
+
+   return lot_size;
+}
+
+//+------------------------------------------------------------------+
+//| Verifica el margen disponible para una operación                 |
+//+------------------------------------------------------------------+
+bool CheckMargin(double lot_size, ENUM_ORDER_TYPE order_type)
+{
+   double margin_required;
+   double price = (order_type == ORDER_TYPE_BUY_STOP) ? 
+                  SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
+                  SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(!OrderCalcMargin(order_type, _Symbol, lot_size, price, margin_required))
+   {
+      Print("Error al calcular margen: ", ErrorCodeDescription(GetLastError()));
+      return false;
+   }
+
+   double free_margin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+
+   if(margin_required > free_margin * 0.5)
+   {
+      PrintFormat("Margen insuficiente: Requerido=%.2f, Libre=%.2f", margin_required, free_margin);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Reinicia las banderas de órdenes si no hay órdenes activas       |
+//+------------------------------------------------------------------+
+void ResetOrderFlagsIfNoOrders()
+{
+   bool has_orders = false;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0 && order_info.Select(ticket) && order_info.Symbol() == _Symbol)
+      {
+         has_orders = true;
+         break;
+      }
+   }
+
+   if(!has_orders && !position_info.Select(_Symbol))
+   {
+      if(buy_order_placed || sell_order_placed)
+      {
+         Print(" - RESET FLAGS: buy_order_placed=", buy_order_placed, " sell_order_placed=", sell_order_placed);
+         buy_order_placed = false;
+         sell_order_placed = false;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Detecta impulso alcista                                          |
+//+------------------------------------------------------------------+
+bool IsImpulseUp()
+{
+   if(ArraySize(last_ticks) < ImpulseTicks) 
+   {
+      Print(" - Impulso UP: No hay suficientes ticks (", ArraySize(last_ticks), "/", ImpulseTicks, ")");
+      return false;
+   }
+
+   double xsum = 0, ysum = 0, xysum = 0, xxsum = 0;
+   for(int i = 0; i < ImpulseTicks; i++)
+   {
+      xsum += i;
+      ysum += last_ticks[i];
+      xysum += i * last_ticks[i];
+      xxsum += i * i;
+   }
+
+   double denominator = (ImpulseTicks * xxsum - xsum * xsum);
+   if(denominator == 0) 
+   {
+      Print(" - Impulso UP: Denominador cero en cálculo de pendiente");
+      return false;
+   }
+
+   double slope = (ImpulseTicks * xysum - xsum * ysum) / denominator;
+
+   bool result = slope > ImpulseSlopeThreshold;
+
+   if(EnableVolatilityFilter && result)
+   {
+      double spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
+      if(MathAbs(slope) < spread * 10) // Factor fijo 10
+      {
+         Print(" - Filtro Volatilidad UP: Pendiente ", slope, " < Spread*10 ", spread*10);
+         return false;
+      }
+   }
+
+   Print(" - Impulso UP: Slope=", slope, " Threshold=", ImpulseSlopeThreshold, " Result=", result);
+   return result;
+}
+
+//+------------------------------------------------------------------+
+//| Detecta impulso bajista                                          |
+//+------------------------------------------------------------------+
+bool IsImpulseDown()
+{
+   if(ArraySize(last_ticks) < ImpulseTicks) 
+   {
+      Print(" - Impulso DOWN: No hay suficientes ticks (", ArraySize(last_ticks), "/", ImpulseTicks, ")");
+      return false;
+   }
+
+   double xsum = 0, ysum = 0, xysum = 0, xxsum = 0;
+   for(int i = 0; i < ImpulseTicks; i++)
+   {
+      xsum += i;
+      ysum += last_ticks[i];
+      xysum += i * last_ticks[i];
+      xxsum += i * i;
+   }
+
+   double denominator = (ImpulseTicks * xxsum - xsum * xsum);
+   if(denominator == 0) 
+   {
+      Print(" - Impulso DOWN: Denominador cero en cálculo de pendiente");
+      return false;
+   }
+
+   double slope = (ImpulseTicks * xysum - xsum * ysum) / denominator;
+
+   bool result = slope < -ImpulseSlopeThreshold;
+
+   if(EnableVolatilityFilter && result)
+   {
+      double spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
+      if(MathAbs(slope) < spread * 10)
+      {
+         Print(" - Filtro Volatilidad DOWN: Pendiente ", MathAbs(slope), " < Spread*10 ", spread*10);
+         return false;
+      }
+   }
+
+   Print(" - Impulso DOWN: Slope=", slope, " Threshold=", -ImpulseSlopeThreshold, " Result=", result);
+   return result;
+}
+//+------------------------------------------------------------------+
