@@ -210,7 +210,7 @@ void OnTick()
    bool has_position = position_info.Select(_Symbol);
    if(has_position)
    {
-      Print(" - POSICIÓN ACTIVA: Ticket #", position_info.Ticket(), 
+      Print(" - POSICIÓN ACTIVA: Ticket #", position_info.Ticket(),
             ", Tipo: ", EnumToString(position_info.PositionType()),
             ", Volumen: ", position_info.Volume(),
             ", Beneficio: ", position_info.Profit());
@@ -245,7 +245,7 @@ void OnTick()
    // 9. Verificar impulso y colocar órdenes
    bool impulseUp = IsImpulseUp();
    bool impulseDown = IsImpulseDown();
-   Print(" - Impulso: ", 
+   Print(" - Impulso: ",
         impulseUp ? "ALCISTA" : (impulseDown ? "BAJISTA" : "SIN IMPULSO"),
         " (Up: ", impulseUp, ", Down: ", impulseDown, ")");
 
@@ -379,7 +379,7 @@ bool OrderExist(int type)
 void CancelInvalidPendingOrders()
 {
    double ask, bid;
-   if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(_Symbol, SYMBOL_BID, bid)) 
+   if(!SymbolInfoDouble(_Symbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(_Symbol, SYMBOL_BID, bid))
    {
       Print(" - ERROR: No se pudo obtener precios para cancelación");
       return;
@@ -401,7 +401,7 @@ void CancelInvalidPendingOrders()
             double distance_threshold = CancelImpulseDistancePoints * _Point;
             if(bid < order_price - distance_threshold)
             {
-               PrintFormat(" - Cancelar BUY STOP: Precio se alejó %.1f pts (Bid: %.1f < Orden: %.1f - %.1f)", 
+               PrintFormat(" - Cancelar BUY STOP: Precio se alejó %.1f pts (Bid: %.1f < Orden: %.1f - %.1f)",
                           distance_threshold/_Point, bid, order_price, distance_threshold/_Point);
                should_cancel = true;
             }
@@ -434,7 +434,7 @@ void CancelInvalidPendingOrders()
             double distance_threshold = CancelImpulseDistancePoints * _Point;
             if(ask > order_price + distance_threshold)
             {
-               PrintFormat(" - Cancelar SELL STOP: Precio se alejó %.1f pts (Ask: %.1f > Orden: %.1f + %.1f)", 
+               PrintFormat(" - Cancelar SELL STOP: Precio se alejó %.1f pts (Ask: %.1f > Orden: %.1f + %.1f)",
                           distance_threshold/_Point, ask, order_price, distance_threshold/_Point);
                should_cancel = true;
             }
@@ -473,7 +473,7 @@ void ManageTrailingAfterRetroceso()
    static double trailing_sl = 0.0;
    static bool primera_vez = true;
 
-   if(!position_info.Select(_Symbol)) 
+   if(!position_info.Select(_Symbol))
    {
       last_position_id = 0;
       retroceso_min = 0.0;
@@ -484,7 +484,7 @@ void ManageTrailingAfterRetroceso()
    }
 
    ulong this_position_id = position_info.Ticket();
-   if(this_position_id != last_position_id) 
+   if(this_position_id != last_position_id)
    {
       last_position_id = this_position_id;
       retroceso_min = 0.0;
@@ -508,7 +508,7 @@ void ManageTrailingAfterRetroceso()
    double stop_level = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
    double min_improvement = MinImprovementPoints * _Point; // Ahora expresado en puntos reales
 
-   if(primera_vez) 
+   if(primera_vez)
    {
       retroceso_min = diferencia;
       primera_vez = false;
@@ -630,7 +630,7 @@ double CalculateLotSize()
    double lot_size = risk_usd / (MaxSL_Points * point_value);
 
    double margin_required_per_lot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
-   if(margin_required_per_lot <= 0) 
+   if(margin_required_per_lot <= 0)
       margin_required_per_lot = 500; // Valor por defecto si no se obtiene
 
    double max_lot_by_margin = (free_margin * 0.5) / margin_required_per_lot;
@@ -660,8 +660,8 @@ double CalculateLotSize()
 bool CheckMargin(double lot_size, ENUM_ORDER_TYPE order_type)
 {
    double margin_required;
-   double price = (order_type == ORDER_TYPE_BUY_STOP) ? 
-                  SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
+   double price = (order_type == ORDER_TYPE_BUY_STOP) ?
+                  SymbolInfoDouble(_Symbol, SYMBOL_ASK) :
                   SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
    if(!OrderCalcMargin(order_type, _Symbol, lot_size, price, margin_required))
@@ -712,7 +712,7 @@ void ResetOrderFlagsIfNoOrders()
 //+------------------------------------------------------------------+
 bool IsImpulseUp()
 {
-   if(ArraySize(last_ticks) < ImpulseTicks) 
+   if(ArraySize(last_ticks) < ImpulseTicks)
    {
       Print(" - Impulso UP: No hay suficientes ticks (", ArraySize(last_ticks), "/", ImpulseTicks, ")");
       return false;
@@ -728,7 +728,7 @@ bool IsImpulseUp()
    }
 
    double denominator = (ImpulseTicks * xxsum - xsum * xsum);
-   if(denominator == 0) 
+   if(denominator == 0)
    {
       Print(" - Impulso UP: Denominador cero en cálculo de pendiente");
       return false;
@@ -757,7 +757,7 @@ bool IsImpulseUp()
 //+------------------------------------------------------------------+
 bool IsImpulseDown()
 {
-   if(ArraySize(last_ticks) < ImpulseTicks) 
+   if(ArraySize(last_ticks) < ImpulseTicks)
    {
       Print(" - Impulso DOWN: No hay suficientes ticks (", ArraySize(last_ticks), "/", ImpulseTicks, ")");
       return false;
@@ -773,7 +773,7 @@ bool IsImpulseDown()
    }
 
    double denominator = (ImpulseTicks * xxsum - xsum * xsum);
-   if(denominator == 0) 
+   if(denominator == 0)
    {
       Print(" - Impulso DOWN: Denominador cero en cálculo de pendiente");
       return false;
